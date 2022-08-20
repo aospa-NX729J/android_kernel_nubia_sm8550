@@ -16,7 +16,7 @@ endif
 	include $(AUDIO_ROOT)/config/kalamaauto.conf
 	INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
 
-#ifeq ($(KERNEL_BUILD), 0)
+#ifeq (0, 0)
 #	ifeq ($(CONFIG_ARCH_LAHAINA), y)
 #		include $(AUDIO_ROOT)/config/lahainaauto.conf
 #		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
