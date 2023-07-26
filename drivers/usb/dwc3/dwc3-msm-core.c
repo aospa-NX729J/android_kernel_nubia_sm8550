@@ -44,6 +44,9 @@
 #include <linux/usb/dwc3-msm.h>
 #include <linux/usb/role.h>
 #include <linux/usb/redriver.h>
+#ifdef CONFIG_NUBIA_USB_CONFIG
+#include <linux/usb/nubia_usb_debug.h>
+#endif
 
 #include "core.h"
 #include "gadget.h"
@@ -204,6 +207,11 @@
 
 #define DWC3_DEPCFG_RETRY		BIT(15)
 #define DWC3_DEPCFG_TRB_WB		BIT(14)
+
+#ifdef CONFIG_NUBIA_USB_CONFIG
+struct dwc3_msm *nubia_mdwc ;
+extern struct kobject *enhance_kobj;
+#endif
 
 enum dbm_reg {
 	DBM_EP_CFG,
@@ -550,6 +558,11 @@ struct dwc3_msm {
 	enum usb_device_speed	max_hw_supp_speed;
 	u32			*gsi_reg;
 	int			gsi_reg_offset_cnt;
+
+#ifdef USB_LPM_TEST
+	struct class *lpm_test_class;
+	struct device *lpm_test_dev;
+#endif
 
 	struct notifier_block	dpdm_nb;
 	struct regulator	*dpdm_reg;
@@ -3205,6 +3218,9 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 			schedule_work(&mdwc->restart_usb_work);
 		break;
 	case DWC3_CONTROLLER_CONNDONE_EVENT:
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("DWC3_CONTROLLER_CONNDONE_EVENT received\n");
+#endif
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_CONNDONE_EVENT received\n");
 
 		/*
@@ -3237,12 +3253,18 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 		dwc3_gsi_event_buf_alloc(dwc);
 		break;
 	case DWC3_CONTROLLER_PULLUP_ENTER:
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("DWC3_CONTROLLER_PULLUP_ENTER %d\n", value);
+#endif
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_PULLUP_ENTER %d\n", value);
 		/* ignore pullup when role switch from device to host */
 		if (mdwc->vbus_active)
 			usb_redriver_gadget_pullup_enter(mdwc->redriver, value);
 		break;
 	case DWC3_CONTROLLER_PULLUP_EXIT:
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("DWC3_CONTROLLER_PULLUP_EXIT %d\n", value);
+#endif
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_PULLUP_EXIT %d\n", value);
 		/* ignore pullup when role switch from device to host */
 		if (mdwc->vbus_active)
@@ -4607,6 +4629,65 @@ static int dwc3_msm_id_notifier(struct notifier_block *nb,
 }
 
 
+#ifdef USB_LPM_TEST
+static bool forge_usb_offline = 0;
+
+/* Usb online lpm test requirement */
+static ssize_t set_usb_online_fn(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
+{
+	int online;
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+
+	if (kstrtoint(buf, 10, &online) < 0)
+		return -EINVAL;
+
+	online = !!online;
+	pr_info("%s, online : %d\n", __func__, online);
+
+	mdwc->vbus_active = online;
+	dwc3_ext_event_notify(mdwc);
+
+	forge_usb_offline = !online;
+
+	return count;
+}
+
+static DEVICE_ATTR(set_usb_online, S_IWUSR, NULL, set_usb_online_fn);
+
+static struct device_attribute *lpm_test_attributes[] = {
+	&dev_attr_set_usb_online,
+	NULL
+};
+
+static int lpm_test_create_device(struct dwc3_msm *motg)
+{
+	struct device_attribute **attrs = lpm_test_attributes;
+	struct device_attribute *attr;
+	int err;
+
+	motg->lpm_test_class = class_create(THIS_MODULE, "charger");
+	if (IS_ERR(motg->lpm_test_class))
+		return PTR_ERR(motg->lpm_test_class);
+
+	motg->lpm_test_dev = device_create(motg->lpm_test_class, NULL, 0, NULL, "test");
+	if (IS_ERR(motg->lpm_test_dev))
+		return PTR_ERR(motg->lpm_test_dev);
+
+	dev_set_drvdata(motg->lpm_test_dev, motg);
+
+	while ((attr = *attrs++)) {
+		err = device_create_file(motg->lpm_test_dev, attr);
+		if (err) {
+			device_destroy(motg->lpm_test_class, 0);
+			return err;
+		}
+	}
+	return 0;
+}
+#endif
+
 static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	unsigned long event, void *ptr)
 {
@@ -4616,6 +4697,11 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	struct dwc3_msm *mdwc = enb->mdwc;
 	char *eud_str;
 	const char *edev_name;
+
+#ifdef USB_LPM_TEST
+	if (forge_usb_offline)
+		forge_usb_offline = 0;
+#endif
 
 	if (!edev || !mdwc)
 		return NOTIFY_DONE;
@@ -5528,6 +5614,30 @@ static int dwc3_msm_parse_core_params(struct dwc3_msm *mdwc, struct device_node 
 	return ret;
 }
 
+#ifdef CONFIG_NUBIA_USB_CONFIG
+static ssize_t usb30_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct dwc3 *dwc = NULL;
+	dwc = platform_get_drvdata(nubia_mdwc->dwc3);
+
+	if(dwc->gadget == NULL)
+			return scnprintf(buf, PAGE_SIZE, "none\n");
+	if (dwc->gadget->speed == USB_SPEED_SUPER_PLUS)
+			return scnprintf(buf, PAGE_SIZE, "USB31\n");
+	else if (dwc->gadget->speed == USB_SPEED_SUPER)
+			return scnprintf(buf, PAGE_SIZE, "USB30\n");
+	else if (dwc->gadget->speed == USB_SPEED_HIGH)
+			return scnprintf(buf, PAGE_SIZE, "USB20\n");
+	else
+			return scnprintf(buf, PAGE_SIZE, "none\n");
+}
+
+static struct kobj_attribute usb_test_attrs[] = {
+	__ATTR(usb30, 0664, usb30_show, NULL),
+};
+#endif
+
 static int dwc3_msm_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node, *dwc3_node, *phy_node;
@@ -5536,6 +5646,9 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	struct resource *res;
 	int ret = 0, size = 0, i;
 	u32 val;
+#ifdef CONFIG_NUBIA_USB_CONFIG
+	int attr_count;
+#endif
 
 	mdwc = devm_kzalloc(&pdev->dev, sizeof(*mdwc), GFP_KERNEL);
 	if (!mdwc)
@@ -5892,6 +6005,27 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		dwc3_ext_event_notify(mdwc);
 	}
 
+#ifdef USB_LPM_TEST
+	ret = lpm_test_create_device(mdwc);
+	if (ret) {
+		dev_err(&pdev->dev, "fail to setup lpm_test_device\n");
+	}
+#endif
+
+#ifdef CONFIG_NUBIA_USB_CONFIG
+	nubia_mdwc = mdwc;
+	if (enhance_kobj == NULL) {
+		pr_err("nubia enhance_kobj init in %s\n", __func__);
+		enhance_kobj = kobject_create_and_add("usb_enhance", kernel_kobj);
+		if (!enhance_kobj)
+			pr_err("nubia enhance_kobj creat failed in %s\n", __func__);
+	}
+	for (attr_count = 0; attr_count < ARRAY_SIZE(usb_test_attrs); attr_count++) {
+		ret = sysfs_create_file(enhance_kobj, &usb_test_attrs[attr_count].attr);
+		if (ret)
+			pr_err("nubia create_file filed in %s\n", __func__);
+	}
+#endif
 	return 0;
 
 put_dwc3:
@@ -6152,6 +6286,9 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
 
 	if (on) {
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("turn on host\n");
+#endif
 		dev_dbg(mdwc->dev, "%s: turn on host\n", __func__);
 		mdwc->hs_phy->flags |= PHY_HOST_MODE;
 		dbg_event(0xFF, "hs_phy_flag:", mdwc->hs_phy->flags);
@@ -6246,6 +6383,9 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 		schedule_delayed_work(&mdwc->perf_vote_work,
 				msecs_to_jiffies(1000 * PM_QOS_SAMPLE_SEC));
 	} else {
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("turn off host\n");
+#endif
 		dev_dbg(mdwc->dev, "%s: turn off host\n", __func__);
 
 		cancel_delayed_work_sync(&mdwc->perf_vote_work);
@@ -6323,6 +6463,28 @@ static void dwc3_override_vbus_status(struct dwc3_msm *mdwc, bool vbus_present)
 }
 
 /**
+ * dwc3_uevent -  notify usb peripheral's on/off state to userspace.
+ *
+ * @mdwc: Pointer to the dwc3_msm structure.
+ * @on:   Turn ON/OFF the gadget.
+ */
+#ifdef USB_LPM_TEST
+static void dwc3_uevent(struct dwc3_msm *mdwc, int state)
+{
+	char *online[2] = { "USB_STATE=ONLINE", NULL };
+	char *offline[2] = { "USB_STATE=OFFLINE", NULL };
+	char **uevent_envp = NULL;
+
+	uevent_envp = state ? online : offline;
+
+	if (uevent_envp && mdwc->lpm_test_dev) {
+		pr_info("%s: sent uevent %s\n", __func__, uevent_envp[0]);
+		kobject_uevent_env(&mdwc->lpm_test_dev->kobj, KOBJ_CHANGE, uevent_envp);
+	}
+}
+#endif
+
+/**
  * dwc3_otg_start_peripheral -  bind/unbind the peripheral controller.
  *
  * @mdwc: Pointer to the dwc3_msm structure.
@@ -6346,6 +6508,9 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 		atomic_read(&mdwc->dev->power.usage_count));
 
 	if (on) {
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("turn on gadget\n");
+#endif
 		dev_dbg(mdwc->dev, "%s: turn on gadget\n", __func__);
 
 		pm_runtime_get_sync(&mdwc->dwc3->dev);
@@ -6401,6 +6566,9 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 		schedule_delayed_work(&mdwc->perf_vote_work,
 				msecs_to_jiffies(1000 * PM_QOS_SAMPLE_SEC));
 	} else {
+#ifdef CONFIG_NUBIA_USB_CONFIG
+		NUBIA_USB_INFO("turn off gadget\n");
+#endif
 		dev_dbg(mdwc->dev, "%s: turn off gadget\n", __func__);
 		cancel_delayed_work_sync(&mdwc->perf_vote_work);
 		msm_dwc3_perf_vote_update(mdwc, false);
@@ -6437,6 +6605,10 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 		set_bit(WAIT_FOR_LPM, &mdwc->inputs);
 	}
 
+#ifdef USB_LPM_TEST
+	dwc3_uevent(mdwc, on);
+#endif
+
 	pm_runtime_put_sync(mdwc->dev);
 	dbg_event(0xFF, "StopGdgt psync",
 		atomic_read(&mdwc->dev->power.usage_count));
@@ -6469,6 +6641,9 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 	}
 
 	state = dwc3_drd_state_string(mdwc->drd_state);
+#ifdef CONFIG_NUBIA_USB_CONFIG
+	NUBIA_USB_INFO("%s state\n", state);
+#endif
 	dev_dbg(mdwc->dev, "%s state\n", state);
 	dbg_event(0xFF, state, 0);
 
