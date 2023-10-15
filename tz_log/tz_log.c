@@ -22,7 +22,7 @@
 #include <linux/proc_fs.h>
 
 /* QSEE_LOG_BUF_SIZE = 32K */
-#define QSEE_LOG_BUF_SIZE 0x8000
+#define QSEE_LOG_BUF_SIZE 0x40000 /* by nubia */
 
 /* enlarged qsee log buf size is 128K by default */
 #define QSEE_LOG_BUF_SIZE_V2 0x20000
