@@ -1582,6 +1582,8 @@ int cam_sensor_power_up(struct cam_sensor_ctrl_t *s_ctrl)
 		goto cci_failure;
 	}
 
+	is_eeprom_poweron = true;   //nubia kangxiong add for CalibrationData
+
 	return rc;
 
 cci_failure:
@@ -1645,6 +1647,7 @@ int cam_sensor_power_down(struct cam_sensor_ctrl_t *s_ctrl)
 	}
 
 	camera_io_release(&(s_ctrl->io_master_info));
+	is_eeprom_poweron = false;    //nubia kangxiong add for CalibrationData
 
 	return rc;
 }

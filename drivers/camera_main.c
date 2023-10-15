@@ -25,6 +25,8 @@
 #include "cam_eeprom_dev.h"
 #include "cam_ois_dev.h"
 #include "cam_tpg_dev.h"
+#include "cam_nubia_dev.h"  //ztemt kangxiong add
+
 #include "cam_flash_dev.h"
 
 #include "cam_icp_v1_dev.h"
@@ -119,6 +121,7 @@ static const struct camera_submodule_component camera_sensor[] = {
 	{&cam_eeprom_driver_init, &cam_eeprom_driver_exit},
 	{&cam_ois_driver_init, &cam_ois_driver_exit},
 	{&cam_flash_init_module, &cam_flash_exit_module},
+	{&cam_nubia_node_init_module, &cam_nubia_node_exit_module},//ztemt added by kangxiong for boken calibration
 #endif
 };
 
