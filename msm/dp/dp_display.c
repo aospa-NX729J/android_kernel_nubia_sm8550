@@ -35,6 +35,11 @@
 #include "dp_pll.h"
 #include "sde_dbg.h"
 
+#ifdef CONFIG_NUBIA_DP
+#include "../nubiadp/nubia_dp_preference.h"
+extern struct edid_control *edid_ctl;
+#endif
+
 #define DRM_DP_IPC_NUM_PAGES 10
 #define DP_MST_DEBUG(fmt, ...) DP_DEBUG(fmt, ##__VA_ARGS__)
 
@@ -285,6 +290,10 @@ static void dp_audio_enable(struct dp_display_private *dp, bool enable)
 			continue;
 		dp_panel = dp->active_panels[idx];
 
+#ifdef CONFIG_NUBIA_DP
+		DP_INFO(": audio_supported = %d, enable = %d\n",
+				dp_panel->audio_supported, enable);
+#endif
 		if (dp_panel->audio_supported) {
 			if (enable) {
 				dp_panel->audio->bw_code =
@@ -1646,9 +1655,11 @@ static void dp_display_disconnect_sync(struct dp_display_private *dp)
 	cancel_work_sync(&dp->attention_work);
 	flush_workqueue(dp->wq);
 
+#ifndef CONFIG_NUBIA_DP
 	if (!dp->debug->sim_mode && !dp->no_aux_switch
 	    && !dp->parser->gpio_aux_switch)
 		dp->aux->aux_switch(dp->aux, false, ORIENTATION_NONE);
+#endif
 
 	/*
 	 * Delay the teardown of the mainlink for better interop experience.
@@ -1660,7 +1671,11 @@ static void dp_display_disconnect_sync(struct dp_display_private *dp)
 	 */
 	disconnect_delay_ms = min_t(u32, dp->debug->disconnect_delay_ms,
 			(u32) MAX_DISCONNECT_DELAY_MS);
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": disconnect delay = %d ms\n", disconnect_delay_ms);
+#else
 	DP_DEBUG("disconnect delay = %d ms\n", disconnect_delay_ms);
+#endif
 	msleep(disconnect_delay_ms);
 
 	dp_display_handle_disconnect(dp, false);
@@ -1707,6 +1722,32 @@ static int dp_display_usbpd_disconnect_cb(struct device *dev)
 	dp_display_state_remove(DP_STATE_CONFIGURED);
 	mutex_unlock(&dp->session_lock);
 
+#ifdef CONFIG_NUBIA_DP
+	if (!dp->debug->sim_mode && !dp->no_aux_switch
+	    && !dp->parser->gpio_aux_switch)
+		dp->aux->aux_switch(dp->aux, false, ORIENTATION_NONE);
+#endif
+
+#ifdef CONFIG_NUBIA_DP
+	if (edid_ctl) {
+		if (edid_ctl->simulate_hpd) {
+			edid_ctl->simulate_hpd = false;
+		} else {
+			dp->panel->mode_override = false;
+			memset(edid_ctl->name, 0, sizeof(edid_ctl->name));
+			memset(edid_ctl->dp_productvdo, 0,
+					sizeof(edid_ctl->dp_productvdo));
+			edid_ctl->cable_connected = false;
+			memset(edid_ctl->edid_modes, 0, EDID_MODES_SIZE);
+			memset(edid_ctl->sel_mode, 0,
+				sizeof(struct selected_edid_mode));
+		}
+	} else {
+		DP_WARN(": edid_ctl = NULL\n");
+	}
+	DP_INFO(": simulate_hpd = %d, cable_connected = %d\n",
+			edid_ctl->simulate_hpd, edid_ctl->cable_connected);
+#endif
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 end:
 	return rc;
@@ -1748,6 +1789,9 @@ static void dp_display_attention_work(struct work_struct *work)
 			struct dp_display_private, attention_work);
 	int rc = 0;
 
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": +\n");
+#endif
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
 	SDE_EVT32_EXTERNAL(dp->state);
@@ -1856,6 +1900,9 @@ mst_attention:
 	dp_display_mst_attention(dp);
 exit:
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": -\n");
+#endif
 }
 
 static int dp_display_usbpd_attention_cb(struct device *dev)
@@ -1873,10 +1920,17 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 		return -ENODEV;
 	}
 
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": hpd_irq:%d, hpd_high:%d, power_on:%d, is_connected:%d\n",
+			dp->hpd->hpd_irq, dp->hpd->hpd_high,
+			!!dp_display_state_is(DP_STATE_ENABLED),
+			!!dp_display_state_is(DP_STATE_CONNECTED));
+#else
 	DP_DEBUG("hpd_irq:%d, hpd_high:%d, power_on:%d, is_connected:%d\n",
 			dp->hpd->hpd_irq, dp->hpd->hpd_high,
 			!!dp_display_state_is(DP_STATE_ENABLED),
 			!!dp_display_state_is(DP_STATE_CONNECTED));
+#endif
 	SDE_EVT32_EXTERNAL(dp->state, dp->hpd->hpd_irq, dp->hpd->hpd_high,
 			!!dp_display_state_is(DP_STATE_ENABLED),
 			!!dp_display_state_is(DP_STATE_CONNECTED));
@@ -1920,6 +1974,9 @@ static void dp_display_connect_work(struct work_struct *work)
 	struct dp_display_private *dp = container_of(work,
 			struct dp_display_private, connect_work);
 
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": +\n");
+#endif
 	if (dp_display_state_is(DP_STATE_TUI_ACTIVE)) {
 		dp_display_state_log("[TUI is active]");
 		return;
@@ -1939,6 +1996,9 @@ static void dp_display_connect_work(struct work_struct *work)
 
 	if (!rc && dp->panel->video_test)
 		dp->link->send_test_response(dp->link);
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": -\n");
+#endif
 }
 
 static int dp_display_usb_notifier(struct notifier_block *nb,
@@ -2190,6 +2250,9 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 	}
 
 	hdcp_disabled = !!dp_display_initialize_hdcp(dp);
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": hdcp_disabled = %d\n", hdcp_disabled);
+#endif
 
 	debug_in.panel = dp->panel;
 	debug_in.hpd = dp->hpd;
@@ -2978,6 +3041,27 @@ static enum drm_mode_status dp_display_validate_mode(
 	if (!debug)
 		goto end;
 
+    //+zte#10342520#linx 2023/04/11 fix PGlass 3D mode no dp show
+#ifdef CONFIG_NUBIA_DP
+    if(edid_ctl){
+        if(0 == strcmp(edid_ctl->name, "PGlass"))
+        {
+            dp_panel->mode_override = 0;
+            DP_INFO("PGlass 3D mode, set mode_override = 0\n");
+        }
+        //+zte#10342520#linx 2023/07/17 fix LeiNiao 3D mode no dp show
+        if(0 == strcmp(edid_ctl->name, "SmartGlasses"))
+        {
+            dp_panel->mode_override = 0;
+            DP_INFO("LeiNiao 3D mode, set mode_override = 0\n");
+        }
+        //-zte 10342520
+    }else{
+        DP_INFO("edid_ctl is NULL\n");
+    }
+#endif
+    //-zte 10342520
+
 	dp_display->convert_to_dp_mode(dp_display, panel, mode, &dp_mode);
 
 	rc = dp_display_validate_topology(dp, dp_panel, mode, &dp_mode, avail_res);
@@ -3060,6 +3144,12 @@ static int dp_display_get_modes(struct dp_display *dp, void *panel,
 	ret = dp_panel->get_modes(dp_panel, dp_panel->connector, dp_mode);
 	if (dp_mode->timing.pixel_clk_khz)
 		dp->max_pclk_khz = dp_mode->timing.pixel_clk_khz;
+#ifdef CONFIG_NUBIA_DP
+	if (!dp_panel->mode_override && dp_panel->edid_ctrl->edid
+			&& !dp_panel->video_test && ret)
+		nubia_edid_modes(dp_panel->connector);
+#endif
+
 	return ret;
 }
 

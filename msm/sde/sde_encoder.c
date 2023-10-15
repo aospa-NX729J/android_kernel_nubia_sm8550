@@ -45,6 +45,11 @@
 #include "sde_encoder_dce.h"
 #include "sde_vm.h"
 #include "sde_fence.h"
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+#include "../nubia/nubia_disp_preference.h"
+#include "../dsi/dsi_panel.h"
+#endif
+
 
 #define SDE_DEBUG_ENC(e, fmt, ...) SDE_DEBUG("enc%d " fmt,\
 		(e) ? (e)->base.base.id : -1, ##__VA_ARGS__)
@@ -135,6 +140,10 @@ enum sde_enc_rc_events {
 	SDE_ENC_RC_EVENT_ENTER_IDLE,
 	SDE_ENC_RC_EVENT_EARLY_WAKEUP,
 };
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+static u32 last_brightness = 0;
+#endif
 
 void sde_encoder_uidle_enable(struct drm_encoder *drm_enc, bool enable)
 {
@@ -5612,6 +5621,13 @@ int sde_encoder_wait_for_event(struct drm_encoder *drm_enc,
 			SDE_ATRACE_BEGIN(atrace_buf);
 			ret = fn_wait(phys);
 			SDE_ATRACE_END(atrace_buf);
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+			if (last_brightness != nubia_disp_val.panel_cur_brightness) {
+				SDE_ATRACE_INT("update_brightness", nubia_disp_val.panel_cur_brightness);
+				last_brightness = nubia_disp_val.panel_cur_brightness;
+			}
+#endif
 			if (ret) {
 				SDE_ERROR_ENC(sde_enc, "intf_type:%d, event:%d i:%d, failed:%d\n",
 						sde_enc->disp_info.intf_type, event, i, ret);

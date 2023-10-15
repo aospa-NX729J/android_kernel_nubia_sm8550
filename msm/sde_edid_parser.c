@@ -145,7 +145,11 @@ static void sde_edid_extract_vendor_id(struct sde_edid_ctrl *edid_ctrl)
 	vendor_id[1] = 'A' - 1 + ((id_codes >> 5) & 0x1F);
 	vendor_id[2] = 'A' - 1 + (id_codes & 0x1F);
 	vendor_id[3] = 0;
+#ifdef CONFIG_NUBIA_DP
+	SDE_INFO("[msm-dp]%s: vendor id is %s\n", __func__, vendor_id);
+#else
 	SDE_EDID_DEBUG("vendor id is %s ", vendor_id);
+#endif
 	SDE_EDID_DEBUG("%s -", __func__);
 }
 

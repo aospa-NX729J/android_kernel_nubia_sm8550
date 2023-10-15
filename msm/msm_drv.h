@@ -1420,6 +1420,26 @@ static inline void __init sde_rsc_rpmh_register(void)
 {
 }
 #endif /* CONFIG_DRM_SDE_RSC */
+#if IS_ENABLED(CONFIG_NUBIA_DISP_PREFERENCE)
+int __init nubia_disp_preference_init(void);
+void __exit nubia_disp_preference_exit(void);
+#else
+static int __init nubia_disp_preference_init(void)
+{
+}
+static void __exit nubia_disp_preference_exit(void)
+{
+
+}
+
+#endif /* CONFIG_DRM_SDE_RSC */
+
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+int __init nubia_dp_preference_init(void);
+void __exit nubia_dp_preference_exit(void);
+int __init nubia_usb_switch_dp_init(void);
+void __exit nubia_usb_switch_dp_exit(void);
+#endif
 
 #if IS_ENABLED(CONFIG_DRM_SDE_WB)
 void __init sde_wb_register(void);

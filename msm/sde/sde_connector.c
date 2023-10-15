@@ -22,6 +22,17 @@
 #include <drm/drm_probe_helper.h>
 #include <linux/version.h>
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+#include <linux/delay.h>
+#include "../nubia/nubia_disp_preference.h"
+
+/* default brightness set by framework*/
+#define DEFAULT_BRIGHTNESS (163 * 16)
+#define COVERT_A 3514/3744
+#define COVERT_B (336*3514/3744-1)
+#endif
+
+
 #define BL_NODE_NAME_SIZE 32
 #define HDR10_PLUS_VSIF_TYPE_CODE      0x81
 
@@ -86,6 +97,71 @@ static const struct drm_prop_enum_list e_panel_mode[] = {
 	{MSM_DISPLAY_MODE_MAX, "none"},
 };
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+int nubia_backlight_covert(struct dsi_display *display,
+								         int value)
+{
+	u32 bl_lvl;
+
+	if(!display)
+		return -EINVAL;
+
+	if (!value)
+		return value;
+
+	NUBIA_DEBUG("before nubia covert backlight, value = %d\n", value);
+
+	switch(value) {
+		case 336 ... 367:
+			bl_lvl = ((value * COVERT_A) - COVERT_B);
+			break;
+		case 368 ... 4080:
+			bl_lvl = ((value * 92) / 100 - 243);
+			break;
+		case 4081:
+			bl_lvl = 3515;   //550nit(max normal)
+			break;
+		case 4082:
+			bl_lvl = 3631;   //600nit
+			break;
+		case 4083:
+			bl_lvl = 3747;   //650nit
+			break;
+		case 4084:
+			bl_lvl = 3863;   //700nit
+			break;
+		case 4085:
+			bl_lvl = 3979;   //750nit
+			break;
+		default:
+			bl_lvl = 4095;
+			DSI_ERR("invalid backlight");
+			break;
+		}
+
+	NUBIA_DEBUG("after nubia covert backlight, bl_lvl = %d\n",bl_lvl);
+
+	return bl_lvl;
+}
+#endif
+
+static inline struct sde_kms *_sde_connector_get_kms(struct drm_connector *conn)
+{
+	struct msm_drm_private *priv;
+
+	if (!conn || !conn->dev || !conn->dev->dev_private) {
+		SDE_ERROR("invalid connector\n");
+		return NULL;
+	}
+	priv = conn->dev->dev_private;
+	if (!priv || !priv->kms) {
+		SDE_ERROR("invalid kms\n");
+		return NULL;
+	}
+
+	return to_sde_kms(priv->kms);
+}
+
 static void sde_dimming_bl_notify(struct sde_connector *conn, struct dsi_backlight_config *config)
 {
 	struct drm_event event;
@@ -141,6 +217,26 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 		brightness = 0;
 
 	display = (struct dsi_display *) c_conn->display;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	if(brightness > nubia_disp_val.bl_limit)
+		brightness = nubia_disp_val.bl_limit;
+	/* HBM mode is 0xFFF(4095), Normal mode max is 0x7FF(2047)*/
+	if (brightness > display->panel->bl_config.brightness_max_level)
+		brightness = display->panel->bl_config.brightness_max_level;
+	if (brightness > c_conn->thermal_max_brightness)
+		brightness = c_conn->thermal_max_brightness;
+	if (brightness != 4095) {
+		bl_lvl = nubia_backlight_covert(display,brightness);
+		display->panel->bl_config.bl_level = bl_lvl;
+	} else {
+		bl_lvl = brightness;
+	}
+	if (((display->panel->hbm_mode) || (display->panel->aod_mode)) && brightness != 0) {
+		nubia_disp_val.last_bl_lvl = 0;
+		NUBIA_DEBUG("Panel in HBM/AOD mode, not allowed set brightness!!\n");
+		return 0;
+	}
+#else
 	if (brightness > display->panel->bl_config.brightness_max_level)
 		brightness = display->panel->bl_config.brightness_max_level;
 	if (brightness > c_conn->thermal_max_brightness)
@@ -150,6 +246,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	/* map UI brightness into driver backlight level with rounding */
 	bl_lvl = mult_frac(brightness, display->panel->bl_config.bl_max_level,
 			display->panel->bl_config.brightness_max_level);
+#endif
 
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
@@ -240,7 +337,11 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	props.type = BACKLIGHT_RAW;
 	props.power = FB_BLANK_UNBLANK;
 	props.max_brightness = bl_config->brightness_max_level;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	props.brightness = DEFAULT_BRIGHTNESS;
+#else
 	props.brightness = bl_config->brightness_max_level;
+#endif
 	snprintf(bl_node_name, BL_NODE_NAME_SIZE, "panel%u-backlight",
 							display_count);
 	c_conn->bl_device = backlight_device_register(bl_node_name, dev->dev, c_conn,
@@ -795,6 +896,9 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 {
 	struct dsi_display *dsi_display;
 	struct dsi_backlight_config *bl_config;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	static ltm_status = 1;
+#endif
 	int rc = 0;
 
 	if (!c_conn) {
@@ -827,11 +931,28 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 	SDE_DEBUG("bl_scale = %u, bl_scale_sv = %u, bl_level = %u\n",
 		bl_config->bl_scale, bl_config->bl_scale_sv,
 		bl_config->bl_level);
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	if ((bl_config->bl_level < 1) || (dsi_display->panel->hbm_mode) || (dsi_display->panel->aod_mode)) {
+		c_conn->unset_bl_level = 0;
+		ltm_status = 0;
+		return 0;
+	} else {
+		if (ltm_status == 0)
+			msleep(10);
+		rc = c_conn->ops.set_backlight(&c_conn->base,
+				dsi_display, bl_config->bl_level);
+		if (!rc)
+			sde_dimming_bl_notify(c_conn, bl_config);
+		c_conn->unset_bl_level = 0;
+		ltm_status = 1;
+	}
+#else
 	rc = c_conn->ops.set_backlight(&c_conn->base,
 			dsi_display, bl_config->bl_level);
 	if (!rc)
 		sde_dimming_bl_notify(c_conn, bl_config);
 	c_conn->unset_bl_level = 0;
+#endif
 
 	return rc;
 }
@@ -3510,8 +3631,6 @@ int sde_connector_event_notify(struct drm_connector *connector, uint32_t type,
 			(u8 *)&val);
 
 	SDE_EVT32(connector->base.id, type, len, val);
-	SDE_DEBUG("connector:%d hw recovery event(%d) value (%d) notified\n",
-			connector->base.id, type, val);
 
 	return ret;
 }

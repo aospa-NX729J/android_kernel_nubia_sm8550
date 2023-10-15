@@ -19,4 +19,3 @@ struct dp_hpd *dp_altmode_get(struct device *dev, struct dp_hpd_cb *cb);
 
 void dp_altmode_put(struct dp_hpd *pd);
 #endif /* _DP_ALTMODE_H_ */
-

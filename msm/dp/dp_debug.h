@@ -117,6 +117,38 @@ struct dp_debug {
 	void (*set_mst_con)(struct dp_debug *dp_debug, int con_id);
 };
 
+#ifdef CONFIG_NUBIA_DP
+struct dp_debug_private {
+	struct dentry *root;
+
+	u32 dpcd_offset;
+	u32 dpcd_size;
+
+	u32 mst_con_id;
+	u32 mst_edid_idx;
+	bool hotplug;
+	u32 sim_mode;
+
+	char exe_mode[SZ_32];
+	char reg_dump[SZ_32];
+
+	struct dp_hpd *hpd;
+	struct dp_link *link;
+	struct dp_panel *panel;
+	struct dp_aux *aux;
+	struct dp_catalog *catalog;
+	struct drm_connector **connector;
+	struct device *dev;
+	struct dp_debug dp_debug;
+	struct dp_parser *parser;
+	struct dp_ctrl *ctrl;
+	struct dp_pll *pll;
+	struct dp_display *display;
+	struct mutex lock;
+	struct dp_aux_bridge *sim_bridge;
+};
+#endif
+
 /**
  * struct dp_debug_in
  * @dev: device instance of the caller

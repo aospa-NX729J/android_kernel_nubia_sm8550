@@ -50,6 +50,8 @@ LINUX_INC +=	-I$(DISPLAY_ROOT) \
 	-I$(DISPLAY_ROOT)/msm/dp \
 	-I$(DISPLAY_ROOT)/msm/dsi \
 	-I$(DISPLAY_ROOT)/msm/sde \
+	-I$(DISPLAY_ROOT)/msm/nubia \
+	-I$(DISPLAY_ROOT)/msm/nubiadp \
 	-I$(DISPLAY_ROOT)/include/uapi/display \
 
 CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
@@ -141,6 +143,10 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 				dp/dp_pll.o \
 				dp/dp_pll_5nm.o \
 				dp/dp_pll_4nm.o
+
+msm_drm-$(CONFIG_NUBIA_DISP_PREFERENCE) += nubia/nubia_disp_preference.o
+msm_drm-$(CONFIG_NUBIA_DP) += nubiadp/nubia_dp_preference.o \
+				nubiadp/usb_switch_dp.o
 
 msm_drm-$(CONFIG_DRM_MSM_DP_MST) += dp/dp_mst_drm.o
 

@@ -1582,6 +1582,9 @@ static int dp_panel_dsc_prepare_basic_params(
 static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 {
 	int rlen, rc = 0;
+#ifdef CONFIG_NUBIA_DP
+	u8 i;
+#endif
 	struct dp_panel_private *panel;
 	struct drm_dp_link *link_info;
 	struct drm_dp_aux *drm_aux;
@@ -1630,8 +1633,13 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 		goto end;
 	}
 
+#ifdef CONFIG_NUBIA_DP
+	print_hex_dump(KERN_INFO, "[msm-dp]SINK DPCD: ",
+		DUMP_PREFIX_NONE, 8, 1, dp_panel->dpcd, rlen, false);
+#else
 	print_hex_dump_debug("[drm-dp] SINK DPCD: ",
 		DUMP_PREFIX_NONE, 8, 1, dp_panel->dpcd, rlen, false);
+#endif
 
 	rlen = drm_dp_dpcd_read(panel->aux->drm_aux,
 		DPRX_FEATURE_ENUMERATION_LIST, &rx_feature, 1);
@@ -1676,8 +1684,13 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 		link_info->num_lanes = min_t(unsigned int,
 			link_info->num_lanes, 2);
 
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": version:%d.%d, rate:%d, lanes:%d\n", panel->major,
+		panel->minor, link_info->rate, link_info->num_lanes);
+#else
 	DP_DEBUG("version:%d.%d, rate:%d, lanes:%d\n", panel->major,
 		panel->minor, link_info->rate, link_info->num_lanes);
+#endif
 
 	if (drm_dp_enhanced_frame_cap(dpcd))
 		link_info->capabilities |= DP_LINK_CAP_ENHANCED_FRAMING;
@@ -1699,6 +1712,13 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 			rc = -EINVAL;
 			goto end;
 		}
+#ifdef CONFIG_NUBIA_DP
+		for (i = 0; i < DP_MAX_DOWNSTREAM_PORTS; i++) {
+			if (dp_panel->ds_ports[i])
+				DP_INFO(": ds_ports[%d] = 0x%x\n",
+					i, dp_panel->ds_ports[i]);
+		}
+#endif
 	}
 
 	if (dfp_count > DP_MAX_DS_PORT_COUNT)

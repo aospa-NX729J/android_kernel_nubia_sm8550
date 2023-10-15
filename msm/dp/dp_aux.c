@@ -10,6 +10,9 @@
 #include "dp_aux.h"
 #include "dp_hpd.h"
 #include "dp_debug.h"
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+#include "../nubiadp/usb_switch_dp.h"
+#endif
 
 #define DP_AUX_ENUM_STR(x)		#x
 #define DP_AUX_IPC_NUM_PAGES 10
@@ -760,7 +763,11 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 {
 	struct dp_aux_private *aux;
 	int rc = 0;
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+	enum switch_function event = SWITCH_USBC_DISPLAYPORT_DISCONNECTED;
+#else
 	enum fsa_function event = FSA_USBC_DISPLAYPORT_DISCONNECTED;
+#endif
 
 	if (!dp_aux) {
 		DP_AUX_ERR(dp_aux, "invalid input\n");
@@ -779,22 +786,40 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 	if (enable) {
 		switch (orientation) {
 		case ORIENTATION_CC1:
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+			event = SWITCH_USBC_ORIENTATION_CC1;
+#else
 			event = FSA_USBC_ORIENTATION_CC1;
+#endif
 			break;
 		case ORIENTATION_CC2:
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+			event = SWITCH_USBC_ORIENTATION_CC2;
+#else
 			event = FSA_USBC_ORIENTATION_CC2;
+#endif
 			break;
 		default:
 			DP_AUX_ERR(dp_aux, "invalid orientation\n");
 			rc = -EINVAL;
 			goto end;
 		}
+#if !IS_ENABLED(CONFIG_NUBIA_DP)
+	} else {
+		event = SWITCH_USBC_DISPLAYPORT_DISCONNECTED;
+#endif
 	}
 
+#if IS_ENABLED(CONFIG_NUBIA_DP)
+	DP_INFO(": enable = %d, orientation = %d, event = %d\n",
+			enable, orientation, event);
+	rc = dp_switch_event(aux->aux_switch_node, event);
+#else
 	DP_AUX_DEBUG(dp_aux, "enable=%d, orientation=%d, event=%d\n",
 			enable, orientation, event);
 
 	rc = fsa4480_switch_event(aux->aux_switch_node, event);
+#endif
 	if (rc)
 		DP_AUX_ERR(dp_aux, "failed to configure fsa4480 i2c device (%d)\n", rc);
 end:

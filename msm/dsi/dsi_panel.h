@@ -134,6 +134,9 @@ struct dsi_backlight_config {
 	u32 bl_level;
 	u32 bl_scale;
 	u32 bl_scale_sv;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	uint32_t backlight_curve[256];
+#endif
 	bool bl_inverted_dbv;
 	/* digital dimming backlight LUT */
 	struct drm_msm_dimming_bl_lut *dimming_bl_lut;
@@ -165,6 +168,9 @@ struct dsi_panel_reset_config {
 	u32 count;
 
 	int reset_gpio;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	int panel_dvdd_1p2_goio;
+#endif
 	int disp_en_gpio;
 	int lcd_mode_sel_gpio;
 	u32 mode_sel_state;
@@ -178,6 +184,21 @@ enum esd_check_status_mode {
 	ESD_MODE_SW_SIM_FAILURE,
 	ESD_MODE_MAX
 };
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+enum current_fps {
+	FPS_60,
+	FPS_90,
+	FPS_120,
+	FPS_144,
+	FPS_MAX
+};
+
+enum ddic_vendor_name {
+       RAYDIUM
+};
+
+#endif
 
 struct drm_panel_esd_config {
 	bool esd_enabled;
@@ -255,6 +276,16 @@ struct dsi_panel {
 	bool reset_gpio_always_on;
 	atomic_t esd_recovery_pending;
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	bool mrc_bypass;
+	bool aod_lowpower_bypass;
+	bool hbm_change_done;
+	//enum current_fps cur_fps;
+	bool hbm_mode;
+	bool aod_mode;
+	enum ddic_vendor_name ddic_vendor;
+	bool demura_flashed;
+#endif
 	bool panel_initialized;
 	bool te_using_watchdog_timer;
 	struct dsi_qsync_capabilities qsync_caps;
@@ -398,6 +429,20 @@ int dsi_panel_get_io_resources(struct dsi_panel *panel,
 
 void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 		struct dsi_display_mode *mode, u32 frame_threshold_us);
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+int nubia_set_aod_brightness(struct dsi_panel *panel, uint32_t value);
+int nubia_dsi_panel_hbm(struct dsi_panel *panel, uint32_t state);
+int nubia_dsi_panel_cabc(struct dsi_panel *panel, uint32_t cabc_modes);
+int nubia_dsi_panel_checksum(struct dsi_panel *panel, uint32_t check_modes);
+int nubia_enable_dimming_feature(struct dsi_panel *panel, bool enable);
+int dsi_panel_read_data(struct mipi_dsi_device *dsi, u8 cmd, void* buf, size_t len);
+int dsi_panel_write_data(struct mipi_dsi_device *dsi, u8 cmd, void* buf, size_t len);
+void nubia_read_panel_type(struct dsi_panel *panel);
+int nubia_dsi_panel_read_reg(struct dsi_panel *panel, uint8_t addr, u8 *reg_val, size_t len);
+int nubia_dsi_panel_write_reg(struct dsi_panel *panel, uint8_t addr);
+
+#endif
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt);
 

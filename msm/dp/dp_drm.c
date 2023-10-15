@@ -668,6 +668,9 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 	struct sde_connector *sde_conn;
 	struct msm_resource_caps_info avail_dp_res;
 	struct dp_panel *dp_panel;
+#ifdef CONFIG_NUBIA_DP
+	enum drm_mode_status mode_status = MODE_BAD;
+#endif
 
 	if (!mode || !display || !connector) {
 		DP_ERR("invalid params\n");
@@ -692,14 +695,27 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 		return MODE_ERROR;
 	}
 
+#ifdef CONFIG_NUBIA_DP
+	mode_status = dp_disp->validate_mode(dp_disp, sde_conn->drv_panel,
+			mode, &avail_dp_res);
+#endif
+
 	if (dp_panel->mode_override && (mode->hdisplay != dp_panel->hdisplay ||
 			mode->vdisplay != dp_panel->vdisplay ||
 			vrefresh != dp_panel->vrefresh ||
 			mode->picture_aspect_ratio != dp_panel->aspect_ratio))
 		return MODE_BAD;
 
+#ifdef CONFIG_NUBIA_DP
+	DP_INFO(": override = %d, %dx%d %d %d, %s\n",
+		dp_panel->mode_override, mode->hdisplay, mode->vdisplay,
+		vrefresh, mode->picture_aspect_ratio,
+		(mode_status == MODE_OK) ? "valid" : "invalid");
+	return mode_status;
+#else
 	return dp_disp->validate_mode(dp_disp, sde_conn->drv_panel,
 			mode, &avail_dp_res);
+#endif
 }
 
 int dp_connector_update_pps(struct drm_connector *connector,

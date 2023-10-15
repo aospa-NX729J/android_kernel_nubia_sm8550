@@ -25,8 +25,18 @@
 #include "msm_kms.h"
 #include "sde_trace.h"
 #include <drm/drm_atomic_uapi.h>
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+#include "nubia/nubia_disp_preference.h"
+#include "dsi/dsi_panel.h"
+#endif
 
 #define MULTIPLE_CONN_DETECTED(x) (x > 1)
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+extern struct nubia_disp_type nubia_disp_val;
+extern struct dsi_display *nubia_display;
+volatile static uint32_t hbm_mode_state = 0;
+volatile static uint32_t enterOrExitHbm = 0; // 1 open, 2 close
+#endif
 
 struct msm_commit {
 	struct drm_device *dev;
@@ -564,6 +574,9 @@ static void complete_commit(struct msm_commit *c)
 	struct drm_device *dev = state->dev;
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	char hbm_name[32];
+#endif
 
 	drm_atomic_helper_wait_for_fences(dev, state, false);
 
@@ -574,7 +587,24 @@ static void complete_commit(struct msm_commit *c)
 	drm_atomic_helper_commit_planes(dev, state,
 				DRM_PLANE_COMMIT_ACTIVE_ONLY);
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	if (enterOrExitHbm != 0) {
+		SDE_ATRACE_BEGIN("commit_vblank");
+		drm_atomic_helper_wait_for_vblanks(dev, state);
+		SDE_ATRACE_END("commit_vblank");
+	}
+#endif
+
 	msm_atomic_helper_commit_modeset_enables(dev, state);
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+			if (enterOrExitHbm == 2) { //close hbm
+				 snprintf(hbm_name, sizeof(hbm_name), "hbm_disable_commit:%d", hbm_mode_state);
+				 SDE_ATRACE_BEGIN(hbm_name);
+				 nubia_dsi_panel_hbm(nubia_display->panel, hbm_mode_state);
+				 SDE_ATRACE_END(hbm_name);
+			}
+#endif
 
 	/* NOTE: _wait_for_vblanks() only waits for vblank on
 	 * enabled CRTCs.  So we end up faulting when disabling
@@ -588,12 +618,20 @@ static void complete_commit(struct msm_commit *c)
 	 * timeout in the CRTC disable path (which really should
 	 * not be critical path)
 	 */
-
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+		if (enterOrExitHbm == 1) {	//open hbm
+			snprintf(hbm_name, sizeof(hbm_name), "hbm_enable_commit:%d", hbm_mode_state);
+			SDE_ATRACE_BEGIN(hbm_name);
+			nubia_dsi_panel_hbm(nubia_display->panel, hbm_mode_state);
+			SDE_ATRACE_END(hbm_name);
+		}
+#endif
 	msm_atomic_wait_for_commit_done(dev, state);
 
 	drm_atomic_helper_cleanup_planes(dev, state);
 
 	kms->funcs->complete_commit(kms, state);
+
 
 	drm_atomic_state_put(state);
 
@@ -720,6 +758,9 @@ int msm_atomic_commit(struct drm_device *dev,
 	struct drm_plane *plane;
 	struct drm_plane_state *old_plane_state, *new_plane_state;
 	int i, ret;
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	uint32_t hbm_state_tmp;
+#endif
 
 	if (!priv || priv->shutdown_in_progress) {
 		DRM_ERROR("priv is null or shutdwon is in-progress\n");
@@ -732,7 +773,6 @@ int msm_atomic_commit(struct drm_device *dev,
 		SDE_ATRACE_END("atomic_commit");
 		return ret;
 	}
-
 	c = commit_init(state, nonblock);
 	if (!c) {
 		ret = -ENOMEM;
@@ -826,6 +866,24 @@ retry:
 	 */
 
 	drm_atomic_state_get(state);
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	hbm_state_tmp = nubia_disp_val.hbm_state;
+	if (hbm_mode_state != hbm_state_tmp) {
+		if ( hbm_state_tmp == 4095 )  {
+			SDE_ATRACE_BEGIN("atomic_commit_enterHbm");
+			enterOrExitHbm = 1;
+			SDE_ATRACE_END("atomic_commit_enterHbm");
+		} else {
+			SDE_ATRACE_BEGIN("atomic_commit_exitHbm");
+			enterOrExitHbm = 2;
+			SDE_ATRACE_END("atomic_commit_exitHbm");
+		}
+		hbm_mode_state = hbm_state_tmp;
+	} else {
+        enterOrExitHbm = 0;
+	}
+#endif
+
 	msm_atomic_commit_dispatch(dev, state, c);
 
 	SDE_ATRACE_END("atomic_commit");

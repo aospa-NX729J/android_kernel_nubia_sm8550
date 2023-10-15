@@ -22,6 +22,9 @@
 #include "dsi_pwr.h"
 #include "sde_dbg.h"
 #include "dsi_parser.h"
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+#include "../nubia/nubia_disp_preference.h"
+#endif
 
 #define to_dsi_display(x) container_of(x, struct dsi_display, host)
 #define INT_BASE_10 10
@@ -37,6 +40,10 @@
 #define MAX_TE_SOURCE_ID  2
 
 #define SEC_PANEL_NAME_MAX_LEN  256
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+int read_ddic_id_count = 0;
+#endif
 
 u8 dbgfs_tx_cmd_buf[SZ_4K];
 static char dsi_display_primary[MAX_CMDLINE_PARAM_LEN];
@@ -249,6 +256,10 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 	bl_scale_sv = panel->bl_config.bl_scale_sv;
 	bl_temp = (u32)bl_temp * bl_scale_sv / MAX_SV_BL_SCALE_LEVEL;
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	if (bl_temp > 3515)
+		bl_temp = bl_lvl * bl_scale / MAX_BL_SCALE_LEVEL;
+#endif
 	/* use bl_temp as index of dimming bl lut to find the dimming panel backlight */
 	if (bl_temp != 0 && panel->bl_config.dimming_bl_lut &&
 	    bl_temp < panel->bl_config.dimming_bl_lut->length) {
@@ -256,9 +267,6 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 			bl_temp, panel->bl_config.dimming_bl_lut->mapped_bl[bl_temp]);
 		bl_temp = panel->bl_config.dimming_bl_lut->mapped_bl[bl_temp];
 	}
-
-	if (bl_temp > panel->bl_config.bl_max_level)
-		bl_temp = panel->bl_config.bl_max_level;
 
 	if (bl_temp && (bl_temp < panel->bl_config.bl_min_level))
 		bl_temp = panel->bl_config.bl_min_level;
@@ -597,9 +605,15 @@ static bool dsi_display_validate_reg_read(struct dsi_panel *panel)
 		for (i = 0; i < len; ++i) {
 			if (config->return_buf[i] !=
 				config->status_value[group + i]) {
-				DRM_ERROR("mismatch: 0x%x\n",
-						config->return_buf[i]);
-				break;
+				if (i == 0) {
+					DRM_ERROR("mismatch[0A]: 0x%x, mismatch[FA]: 0x%x,status_value: 0x%x, i:%d \n",
+							config->return_buf[i],config->return_buf[i+1] ,config->status_value[group + i], i);
+					break;
+				} else if (i == 1) {
+					DRM_ERROR("mismatch[0A]: 0x%x, mismatch[FA]: 0x%x,status_value: 0x%x, i:%d \n",
+							config->return_buf[i-1],config->return_buf[i] ,config->status_value[group + i], i);
+					break;
+				}
 			}
 		}
 
@@ -2609,7 +2623,7 @@ static void dsi_display_parse_cmdline_topology(struct dsi_display *display,
 			goto end;
 		}
 	}
-	DSI_DEBUG("successfully parsed command line topology and timing\n");
+	NUBIA_DEBUG("successfully parsed command line topology and timing\n");
 end:
 	display->cmdline_topology = cmdline_topology;
 	display->cmdline_timing = cmdline_timing;
@@ -2627,6 +2641,10 @@ static int dsi_display_parse_boot_display_selection(void)
 	int i, j;
 
 	for (i = 0; i < MAX_DSI_ACTIVE_DISPLAY; i++) {
+		//pr_err("zxb get panel_name from uefi: i=%d, name=%s\n", i, boot_displays[i].boot_param);
+       // if (i == 0)
+            // strcpy(boot_displays[i].boot_param, "qcom,mdss_dsi_rm692h0_amoled_dsc_dv5_cmd:");// "qcom,mdss_dsi_sim_video");// // "qcom,mdss_dsi_rm692h0_1116_2480_amoled_cmd:")
+        pr_err("after: i=%d, name=%s\n", i, boot_displays[i].boot_param);
 		strlcpy(disp_buf, boot_displays[i].boot_param,
 			MAX_CMDLINE_PARAM_LEN);
 
@@ -3378,6 +3396,109 @@ static int dsi_host_detach(struct mipi_dsi_host *host,
 	return 0;
 }
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+ssize_t dsi_panel_transfer_cmd(struct mipi_dsi_host *host,
+				const struct mipi_dsi_msg *msg)
+{
+	struct dsi_display *display;
+	struct dsi_display_ctrl *ctr;
+	struct dsi_cmd_desc cmd = {};
+	u32 cmd_flags;
+	int rc = 0, ret = 0;
+	int ctrl_idx;
+
+	if (!host || !msg) {
+		DSI_ERR("[%s] dsi_host_transfer Invalid params\n", __FUNCTION__);
+		return 0;
+	}
+
+	display = to_dsi_display(host);
+
+	/* Avoid sending DCS commands when ESD recovery is pending */
+	if (atomic_read(&display->panel->esd_recovery_pending)) {
+		pr_debug("ESD recovery pending\n");
+		return 0;
+	}
+
+	rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+		DSI_ALL_CLKS, DSI_CLK_ON);
+	if (rc) {
+		DSI_ERR("[%s] failed to enable all DSI clocks, rc=%d\n",
+			display->name, rc);
+		goto error;
+	}
+
+	rc = dsi_display_cmd_engine_enable(display);
+	if (rc) {
+		DSI_ERR("[%s] failed to enable cmd engine, rc=%d\n",
+			display->name, rc);
+		goto error_disable_clks;
+	}
+
+	if (display->tx_cmd_buf == NULL) {
+		rc = dsi_host_alloc_cmd_tx_buffer(display);
+		if (rc) {
+			pr_err("failed to allocate cmd tx buffer memory\n");
+			goto error_disable_cmd_engine;
+		}
+	}
+
+	ctrl_idx = 0;
+
+	cmd_flags = DSI_CTRL_CMD_FETCH_MEMORY | DSI_CTRL_CMD_READ |
+		DSI_CTRL_CMD_CUSTOM_DMA_SCHED | DSI_CTRL_CMD_LAST_COMMAND;
+
+	if (!msg) {
+	    DSI_ERR("Invalid params\n");
+	    return 0;
+	}
+	memcpy(&cmd.msg, msg, sizeof(*msg));
+	cmd.ctrl = 0;
+	cmd.post_wait_ms = 0;
+	cmd.ctrl_flags = cmd_flags;
+	ctr = &display->ctrl[ctrl_idx];
+
+	dsi_display_set_cmd_tx_ctrl_flags(display,&cmd);
+	rc = dsi_ctrl_transfer_prepare(ctr->ctrl, cmd.ctrl_flags);
+	if (rc) {
+		DSI_ERR("prepare for rx cmd transfer failed rc=%d\n", rc);
+		return rc;
+	}
+
+	rc = dsi_ctrl_cmd_transfer(ctr->ctrl, &cmd);
+	if (rc <= 0) {
+		DSI_ERR("[%s] cmd transfer failed, rc=%d\n",
+			display->name, rc);
+		goto error_disable_cmd_engine;
+	}
+
+	dsi_ctrl_transfer_unprepare(ctr->ctrl, cmd.ctrl_flags);
+
+error_disable_cmd_engine:
+	ret = dsi_display_cmd_engine_disable(display);
+	if (ret) {
+		pr_err("[%s]failed to disable DSI cmd engine, rc=%d\n",
+			display->name, ret);
+   }
+error_disable_clks:
+	ret = dsi_display_clk_ctrl(display->dsi_clk_handle,
+		DSI_ALL_CLKS, DSI_CLK_OFF);
+	if (ret) {
+		pr_err("[%s] failed to disable all DSI clocks, rc=%d\n",
+			display->name, ret);
+   }
+error:
+	return rc;
+}
+
+void nubia_display_set_backlight(struct dsi_display *display) {
+	struct sde_connector *sde_conn;
+	sde_conn = to_sde_connector(display->drm_conn);
+	if(sde_conn && sde_conn->bl_device) {
+		backlight_update_status(sde_conn->bl_device);
+	}
+}
+#endif
 int dsi_host_transfer_sub(struct mipi_dsi_host *host, struct dsi_cmd_desc *cmd)
 {
 	struct dsi_display *display;
@@ -4276,6 +4397,11 @@ static int dsi_display_res_init(struct dsi_display *display)
 		display->hw_ownership = true;
 	}
 
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	/* init panel state */
+	display->panel->hbm_mode = false;
+	display->panel->aod_mode = false;
+#endif
 	return 0;
 error_panel_put:
 	dsi_panel_put(display->panel);
@@ -5242,6 +5368,7 @@ static int _dsi_display_dev_init(struct dsi_display *display)
 		return -EINVAL;
 	}
 
+	NUBIA_DEBUG("_dsi_display_dev_init ++: %s\n", display->name);
 	if (!display->panel_node && !display->fw)
 		return 0;
 
@@ -5875,6 +6002,7 @@ static int dsi_display_init(struct dsi_display *display)
 	int rc = 0;
 	struct platform_device *pdev = display->pdev;
 
+	NUBIA_DEBUG("dsi_display_init ++: %s\n", display->name);
 	mutex_init(&display->display_lock);
 
 	rc = _dsi_display_dev_init(display);
@@ -5953,6 +6081,9 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 		goto end;
 	}
 
+	pr_err("dsi_display_dev_probe ++\n");
+
+    NUBIA_DEBUG("8450 dsi_display_dev_probe [%s] , pdev->dev.of_node->name is %s, pdev->dev.of_node->full_name is %s\n",pdev->name,pdev->dev.of_node->name,pdev->dev.of_node->full_name);
 	display = devm_kzalloc(&pdev->dev, sizeof(*display), GFP_KERNEL);
 	if (!display) {
 		rc = -ENOMEM;
@@ -5974,6 +6105,13 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 		goto end;
 	}
 
+        if (mdp_node->name)
+                NUBIA_DEBUG("mdp_node name is %s ++", mdp_node->name);
+
+        if (mdp_node->full_name)
+                NUBIA_DEBUG("mdp_node full name is %s ++", mdp_node->full_name);
+
+
 	display->trusted_vm_env = of_property_read_bool(mdp_node,
 						"qcom,sde-trusted-vm-env");
 	if (display->trusted_vm_env)
@@ -5993,6 +6131,8 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 	boot_disp = &boot_displays[index];
 	node = pdev->dev.of_node;
 	if (boot_disp->boot_disp_en) {
+       NUBIA_DEBUG("boot_disp->name is %s ++ \n", boot_disp->name);
+
 		/* The panel name should be same as UEFI name index */
 		panel_node = of_find_node_by_name(mdp_node, boot_disp->name);
 		if (!panel_node)
@@ -6011,6 +6151,8 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 	display->panel_node = panel_node;
 	display->pdev = pdev;
 	display->boot_disp = boot_disp;
+
+    NUBIA_DEBUG("get disply :[%s]++ \n", display->name);
 
 	dsi_display_parse_cmdline_topology(display, index);
 
@@ -6044,6 +6186,10 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 		if (rc)
 			goto end;
 	}
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+	nubia_set_dsi_ctrl(display, display->display_type);
+#endif
 
 	return 0;
 end:
@@ -7042,6 +7188,16 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 				   display->name, mode_idx);
 			rc = -EINVAL;
 			return rc;
+		}
+
+		/*
+		* Update the host_config.dst_format for compressed RGB101010 pixel format.
+		*/
+		if (display->panel->host_config.dst_format == DSI_PIXEL_FORMAT_RGB101010 &&
+				display_mode.timing.dsc_enabled) {
+			display->panel->host_config.dst_format = DSI_PIXEL_FORMAT_RGB888;
+			DSI_DEBUG("updated dst_format from %d to %d",
+				DSI_PIXEL_FORMAT_RGB101010,display->panel->host_config.dst_format);
 		}
 
 		if (display->cmdline_timing == display_mode.mode_idx) {
@@ -8560,6 +8716,13 @@ int dsi_display_enable(struct dsi_display *display)
 		DSI_ERR("Invalid params\n");
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_NUBIA_DISP_PREFERENCE
+		if(read_ddic_id_count == 0) {
+			nubia_read_panel_type(display->panel);
+		}
+		read_ddic_id_count = 1;
+#endif
 
 	if (!display->panel->cur_mode) {
 		DSI_ERR("no valid mode set for the display\n");
