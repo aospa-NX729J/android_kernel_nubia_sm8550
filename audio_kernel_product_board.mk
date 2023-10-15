@@ -30,6 +30,7 @@ PRODUCT_PACKAGES += $(KERNEL_MODULES_OUT)/swr_dmic_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wsa884x_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wsa883x_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd938x_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/tfa98xx_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd938x_slave_dlkm.ko
 endif
 ifeq ($(call is-board-platform-in-list,bengal), true)
