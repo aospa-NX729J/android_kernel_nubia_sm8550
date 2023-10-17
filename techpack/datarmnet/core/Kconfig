@@ -5,7 +5,6 @@
 config RMNET_CORE
         tristate "RMNET Core"
 	default m 
-	select GRO_CELLS
 	help
 	  If you select this, you will enable the RMNET module which is used
 	  for handling data in the multiplexing and aggregation protocol (MAP)
