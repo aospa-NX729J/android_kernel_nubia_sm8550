@@ -1,3 +1,5 @@
+DEVNAME := kiwi_v2
+
 CONFIG_CNSS_KIWI := y
 CONFIG_CNSS_KIWI_V2 := y
 
