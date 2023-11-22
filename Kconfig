@@ -35,3 +35,5 @@ source "Documentation/Kconfig"
 source "$(KCONFIG_EXT_PREFIX)Kconfig.ext"
 
 source "kernel/sched/walt/Kconfig"
+
+source "techpack/Kconfig"

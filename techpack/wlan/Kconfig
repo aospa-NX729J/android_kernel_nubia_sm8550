@@ -1,0 +1,18 @@
+config CNSS_OUT_OF_TREE
+    bool "CNSS out of tree"
+    default n
+    help
+      This option is to enable CNSS compilation out of it's usual path.
+      If unsure, say n.
+
+source "techpack/wlan/platform/cnss2/Kconfig"
+
+source "techpack/wlan/platform/cnss_genl/Kconfig"
+
+source "techpack/wlan/platform/cnss_prealloc/Kconfig"
+
+source "techpack/wlan/platform/cnss_utils/Kconfig"
+
+source "techpack/wlan/platform/icnss2/Kconfig"
+
+source "techpack/wlan/qcacld-3.0/Kconfig"
